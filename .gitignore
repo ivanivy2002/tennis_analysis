@@ -1,0 +1,16 @@
+# 模型
+*.pt
+# 视频
+*.mov
+*.mp4
+*.avi
+*.wmv
+# 压缩包
+*.zip
+*.tar
+*.gz
+*.rar
+*.7z
+# 训练文件
+training/runs/
+training/datasets/
