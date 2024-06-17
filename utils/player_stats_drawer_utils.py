@@ -1,5 +1,10 @@
+from copy import deepcopy
 import numpy as np
 import cv2
+import pandas as pd
+
+from utils.bbox_utils import measure_distance
+from utils.conversions import convert_pixel_distance_to_meters
 
 def draw_player_stats(output_video_frames,player_stats):
 
@@ -56,3 +61,78 @@ def draw_player_stats(output_video_frames,player_stats):
         output_video_frames[index] = cv2.putText(output_video_frames[index], text, (start_x+130, start_y+200), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
     
     return output_video_frames
+
+
+
+def cal_stats(ball_shot_frames, ball_mini_court_detections, player_mini_court_detections, video_frames, mini_court, constants):
+    # 初始化球员统计数据
+    player_stats_data = [{
+        'frame_num': 0,
+        'player_1_number_of_shots': 0,
+        'player_1_total_shot_speed': 0,
+        'player_1_last_shot_speed': 0,
+        'player_1_total_player_speed': 0,
+        'player_1_last_player_speed': 0,
+        'player_2_number_of_shots': 0,
+        'player_2_total_shot_speed': 0,
+        'player_2_last_shot_speed': 0,
+        'player_2_total_player_speed': 0,
+        'player_2_last_player_speed': 0,
+    }]
+
+    # 处理每次击球的帧
+    for ball_shot_ind in range(len(ball_shot_frames) - 1):
+        start_frame = ball_shot_frames[ball_shot_ind]
+        end_frame = ball_shot_frames[ball_shot_ind + 1]
+        ball_shot_time_in_seconds = (end_frame - start_frame) / 24  # 24fps
+
+        # 获取球的移动距离
+        distance_covered_by_ball_pixels = measure_distance(ball_mini_court_detections[start_frame][1],
+                                                        ball_mini_court_detections[end_frame][1])
+        distance_covered_by_ball_meters = convert_pixel_distance_to_meters(distance_covered_by_ball_pixels,
+                                                                            constants.DOUBLE_LINE_WIDTH,
+                                                                            mini_court.get_width_of_mini_court())
+
+        # 计算球速 (km/h)
+        speed_of_ball_shot = distance_covered_by_ball_meters / ball_shot_time_in_seconds * 3.6
+
+        # 找到击球的球员
+        player_positions = player_mini_court_detections[start_frame]
+        player_shot_ball = min(player_positions.keys(), key=lambda player_id: measure_distance(player_positions[player_id],
+                                                                                                ball_mini_court_detections[start_frame][1]))
+
+        # 计算对手球员的速度
+        opponent_player_id = 1 if player_shot_ball == 2 else 2
+        distance_covered_by_opponent_pixels = measure_distance(player_mini_court_detections[start_frame][opponent_player_id],
+                                                            player_mini_court_detections[end_frame][opponent_player_id])
+        distance_covered_by_opponent_meters = convert_pixel_distance_to_meters(distance_covered_by_opponent_pixels,
+                                                                                constants.DOUBLE_LINE_WIDTH,
+                                                                                mini_court.get_width_of_mini_court())
+
+        speed_of_opponent = distance_covered_by_opponent_meters / ball_shot_time_in_seconds * 3.6
+
+        # 更新球员统计数据
+        current_player_stats = deepcopy(player_stats_data[-1])
+        current_player_stats['frame_num'] = start_frame
+        current_player_stats[f'player_{player_shot_ball}_number_of_shots'] += 1
+        current_player_stats[f'player_{player_shot_ball}_total_shot_speed'] += speed_of_ball_shot
+        current_player_stats[f'player_{player_shot_ball}_last_shot_speed'] = speed_of_ball_shot
+
+        current_player_stats[f'player_{opponent_player_id}_total_player_speed'] += speed_of_opponent
+        current_player_stats[f'player_{opponent_player_id}_last_player_speed'] = speed_of_opponent
+
+        player_stats_data.append(current_player_stats)
+
+    # 创建 DataFrame 并进行向前填充
+    player_stats_data_df = pd.DataFrame(player_stats_data)
+    frames_df = pd.DataFrame({'frame_num': list(range(len(video_frames)))})
+    player_stats_data_df = pd.merge(frames_df, player_stats_data_df, on='frame_num', how='left')
+    player_stats_data_df = player_stats_data_df.ffill()
+
+    # 计算平均速度
+    player_stats_data_df['player_1_average_shot_speed'] = player_stats_data_df['player_1_total_shot_speed'] / player_stats_data_df['player_1_number_of_shots']
+    player_stats_data_df['player_2_average_shot_speed'] = player_stats_data_df['player_2_total_shot_speed'] / player_stats_data_df['player_2_number_of_shots']
+    player_stats_data_df['player_1_average_player_speed'] = player_stats_data_df['player_1_total_player_speed'] / player_stats_data_df['player_1_number_of_shots']
+    player_stats_data_df['player_2_average_player_speed'] = player_stats_data_df['player_2_total_player_speed'] / player_stats_data_df['player_2_number_of_shots']
+
+    return player_stats_data_df
